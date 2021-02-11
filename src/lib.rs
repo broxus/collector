@@ -6,6 +6,7 @@ use ton_block::{
 };
 use ton_types::{BuilderData, Cell, IBitstring, Result, SliceData, UInt256};
 
+/// Collector message params
 pub struct CollectorMessageParams {
     pub key: Keypair,
     pub to: MsgAddressInt,
@@ -16,7 +17,8 @@ pub struct CollectorMessageParams {
     pub ttl: u32,
 }
 
-pub fn generate_message(params: CollectorMessageParams) -> Result<()> {
+/// Create external message to the deposit address
+pub fn create_message(params: CollectorMessageParams) -> Result<Message> {
     // Generate wallet init data
     let init_data = InitData::from_key(&params.key).with_wallet_id(params.id);
 
@@ -38,6 +40,8 @@ pub fn generate_message(params: CollectorMessageParams) -> Result<()> {
         params.seqno,
         params.ttl,
         &[Gift {
+            // 32 - destroy contract if it's balance becomes zero
+            // 128 - attach all account balance to the message,
             flags: 128 + if params.destroy { 32 } else { 0 },
             bounce: false,
             destination: params.to,
@@ -46,17 +50,12 @@ pub fn generate_message(params: CollectorMessageParams) -> Result<()> {
     )?;
     message.set_body(transfer_msg.into());
 
-    // Serialize and with as base64
-    let message = ton_types::serialize_toc(&message.serialize()?)?;
-    println!("{}", base64::encode(&message));
-
-    Ok(())
+    Ok(message)
 }
 
-pub fn generate_address(key: Keypair, id: u32) -> Result<()> {
-    let address = InitData::from_key(&key).with_wallet_id(id).compute_addr()?;
-    println!("{}", address);
-    Ok(())
+/// Compute deposit address from key and wallet id
+pub fn compute_deposit_address(key: Keypair, id: u32) -> Result<MsgAddressInt> {
+    InitData::from_key(&key).with_wallet_id(id).compute_addr()
 }
 
 /// WalletV3 init data
@@ -124,6 +123,7 @@ struct Gift {
     pub amount: u64,
 }
 
+/// Generate actions for deposit account
 fn make_gift_message(
     init_data: &InitData,
     key: &Keypair,
@@ -135,18 +135,16 @@ fn make_gift_message(
         ton_types::fail!("too many gifts");
     }
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
     let mut message = BuilderData::new();
+
+    // Insert prefix
     message
         .append_u32(init_data.wallet_id)?
-        .append_u32(now as u32 + ttl)?
+        .append_u32(now() + ttl)?
         .append_u32(seqno)?;
 
     for gift in gifts {
+        // Create internal message
         let internal_message = Message::with_int_header(InternalMessageHeader {
             ihr_disabled: true,
             bounce: gift.bounce,
@@ -155,15 +153,25 @@ fn make_gift_message(
             ..Default::default()
         });
 
+        // Append it to body
         message
             .append_u8(gift.flags)?
             .append_reference_cell(internal_message.serialize()?);
     }
 
+    // Sign body
     let signature = key.sign(message.clone().into_cell()?.repr_hash().as_slice());
     message.prepend_raw(signature.as_bytes(), ed25519_dalek::SIGNATURE_LENGTH * 8)?;
 
+    // Done
     message.into_cell()
+}
+
+fn now() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as u32
 }
 
 fn load_code() -> Cell {
