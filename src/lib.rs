@@ -6,15 +6,19 @@ use ton_block::{
 };
 use ton_types::{BuilderData, Cell, IBitstring, Result, SliceData, UInt256};
 
-pub fn generate_message(
-    key: Keypair,
-    to: MsgAddressInt,
-    init: bool,
-    seqno: u32,
-    ttl: u32,
-) -> Result<()> {
+pub struct CollectorMessageParams {
+    pub key: Keypair,
+    pub to: MsgAddressInt,
+    pub init: bool,
+    pub destroy: bool,
+    pub seqno: u32,
+    pub id: u32,
+    pub ttl: u32,
+}
+
+pub fn generate_message(params: CollectorMessageParams) -> Result<()> {
     // Generate wallet init data
-    let init_data = InitData::from_key(&key).with_seqno(seqno);
+    let init_data = InitData::from_key(&params.key).with_wallet_id(params.id);
 
     // Create external message
     let mut message = Message::with_ext_in_header(ExternalInboundMessageHeader {
@@ -22,7 +26,7 @@ pub fn generate_message(
         ..Default::default()
     });
 
-    if init {
+    if params.init {
         // Attach state_init to deploy wallet
         message.set_state_init(init_data.make_state_init()?);
     }
@@ -30,12 +34,13 @@ pub fn generate_message(
     // Attach internal message
     let transfer_msg = make_gift_message(
         &init_data,
-        &key,
-        ttl,
+        &params.key,
+        params.seqno,
+        params.ttl,
         &[Gift {
-            flags: 128,
+            flags: 128 + if params.destroy { 32 } else { 0 },
             bounce: false,
-            destination: to,
+            destination: params.to,
             amount: 0,
         }],
     )?;
@@ -48,8 +53,8 @@ pub fn generate_message(
     Ok(())
 }
 
-pub fn generate_address(key: Keypair) -> Result<()> {
-    let address = InitData::from_key(&key).compute_addr()?;
+pub fn generate_address(key: Keypair, id: u32) -> Result<()> {
+    let address = InitData::from_key(&key).with_wallet_id(id).compute_addr()?;
     println!("{}", address);
     Ok(())
 }
@@ -70,8 +75,8 @@ impl InitData {
         }
     }
 
-    pub fn with_seqno(mut self, seqno: u32) -> Self {
-        self.seqno = seqno;
+    pub fn with_wallet_id(mut self, id: u32) -> Self {
+        self.wallet_id = id;
         self
     }
 
@@ -91,12 +96,12 @@ impl InitData {
 
     pub fn deserialize(data: Cell) -> Result<Self> {
         let mut slice: SliceData = data.into();
-        let seq_no = slice.get_next_u32()?;
+        let seqno = slice.get_next_u32()?;
         let wallet_id = slice.get_next_u32()?;
         let public_key = slice.get_next_bytes(32)?.into();
 
         Ok(InitData {
-            seqno: seq_no,
+            seqno,
             wallet_id,
             public_key,
         })
@@ -122,6 +127,7 @@ struct Gift {
 fn make_gift_message(
     init_data: &InitData,
     key: &Keypair,
+    seqno: u32,
     ttl: u32,
     gifts: &[Gift],
 ) -> Result<Cell> {
@@ -138,7 +144,7 @@ fn make_gift_message(
     message
         .append_u32(init_data.wallet_id)?
         .append_u32(now as u32 + ttl)?
-        .append_u32(init_data.seqno)?;
+        .append_u32(seqno)?;
 
     for gift in gifts {
         let internal_message = Message::with_int_header(InternalMessageHeader {

@@ -12,6 +12,9 @@ target/release/collector --help
 ### How to use
 
 ```bash
+# 0. Generate secret key
+openssl genpkey -algorithm ED25519 | openssl asn1parse -offset 14 | cut -d ':' -f 4
+
 # 1. Generate deposit address
 collector addr <secret key in hex format> 
 

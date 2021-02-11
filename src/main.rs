@@ -7,6 +7,8 @@ use ed25519_dalek::{Keypair, PublicKey, SecretKey};
 use ton_block::MsgAddressInt;
 use ton_types::Result;
 
+use collector_lib::CollectorMessageParams;
+
 fn main() {
     let args: Args = Args::parse();
     if let Err(e) = args.cmd.execute() {
@@ -18,10 +20,16 @@ fn main() {
 impl SubCommand {
     pub fn execute(self) -> Result<()> {
         match self {
-            SubCommand::Msg(cmd) => {
-                collector_lib::generate_message(cmd.key.pair, cmd.to, cmd.init, cmd.seqno, cmd.ttl)
-            }
-            SubCommand::Addr(cmd) => collector_lib::generate_address(cmd.key.pair),
+            SubCommand::Msg(cmd) => collector_lib::generate_message(CollectorMessageParams {
+                key: cmd.key.pair,
+                to: cmd.to,
+                init: cmd.init,
+                destroy: cmd.destroy,
+                seqno: cmd.seqno,
+                id: cmd.id,
+                ttl: cmd.ttl,
+            }),
+            SubCommand::Addr(cmd) => collector_lib::generate_address(cmd.key.pair, cmd.id),
         }
     }
 }
@@ -48,6 +56,8 @@ struct CmdGenerateMessage {
     to: MsgAddressInt,
     #[clap(long, about = "Whether to attach init data to the message")]
     init: bool,
+    #[clap(long, about = "Whether to destroy contract after this message")]
+    destroy: bool,
     #[clap(
         long,
         about = "Message sequence number",
@@ -55,6 +65,8 @@ struct CmdGenerateMessage {
         default_value = "0"
     )]
     seqno: u32,
+    #[clap(long, about = "Wallet id", default_value = "0")]
+    id: u32,
     #[clap(long, about = "Message timeout in seconds", default_value = "60")]
     ttl: u32,
 }
@@ -62,6 +74,8 @@ struct CmdGenerateMessage {
 #[derive(Clap)]
 struct CmdGenerateAddress {
     key: InputKey,
+    #[clap(long, about = "Wallet id", default_value = "0")]
+    id: u32,
 }
 
 struct InputKey {
